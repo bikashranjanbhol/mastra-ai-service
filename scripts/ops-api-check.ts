@@ -11,6 +11,7 @@ import { parseEnvelope, postOps, OpsApiError } from '../src/mastra/services/ops-
 import { OPS_ENDPOINTS, findEndpoint } from '../src/mastra/services/ops-api/registry';
 import { createApiTool } from '../src/mastra/tools/ops-api';
 import type { OpsApiConfig } from '../src/mastra/config/ops-api';
+import { APPS_SAMPLE, CATALOG_SAMPLE, KPI_GROUPS_SAMPLE, KPI_NAMES_SAMPLE, SEARCH_SAMPLE } from './ops-api-samples';
 
 const CONFIG: OpsApiConfig = { baseUrl: 'https://ops.test', timeoutMs: 5000, maxRetries: 0 };
 
@@ -172,6 +173,109 @@ heading('6. approval policy');
 check('read endpoint does not require approval', (tool as { requireApproval?: unknown }).requireApproval === false);
 const writeTool = createApiTool({ ...endpoint, id: 'ops_write_probe', kind: 'write' });
 check('write endpoint requires approval', (writeTool as { requireApproval?: unknown }).requireApproval === true);
+
+// ── 6b. Matrix path search (paginated) ───────────────────────────────────────
+heading('6b. ops_matrix_path_search');
+const searchTool = createApiTool(findEndpoint('ops_matrix_path_search')!, {
+  config: CONFIG,
+  fetchImpl: stubFetch(SEARCH_SAMPLE),
+});
+const searchOut = (await searchTool.execute!(
+  { appGroup: 'Atlas', appRegion: 'Ambient', page: 1, size: 20, sortOrder: 'desc' },
+  {} as never,
+)) as Record<string, any>;
+
+check('unwraps the row array', Array.isArray(searchOut.rows) && searchOut.rows.length === 2);
+check('maps nested metadata to flat fields', searchOut.rows[0].matrixPath === 'Sam Rivera');
+check('maps analytics counts', searchOut.rows[0].totalRed === 196 && searchOut.rows[0].totalAmber === 203);
+check('surfaces pagination', searchOut.pagination?.totalItems === 488 && searchOut.pagination?.hasNext === true);
+
+// The whole point: thousands of sources must never reach the model.
+const serialised = JSON.stringify(searchOut);
+check('collapses 1650 sources to a count', searchOut.rows[1].sourceCount === 1650);
+check('never emits a sourceId', !serialised.includes('sourceId'), `${serialised.length} chars total`);
+check('output stays small despite huge input', serialised.length < 4000, `${serialised.length} chars`);
+
+console.log(`    raw sample: ${JSON.stringify(SEARCH_SAMPLE).length.toLocaleString()} chars`);
+console.log(`    projected : ${serialised.length.toLocaleString()} chars`);
+
+// Malformed metadata in this sample must NOT be reported as data loss.
+check('string timedOut is not treated as a timeout', !/timed out/.test(String(searchOut.warnings)));
+check('incoherent shard block is flagged as unverifiable, not as an undercount',
+  String(searchOut.warnings).includes('could not be verified'));
+
+// ── 6c. Filter discovery chain ───────────────────────────────────────────────
+heading('6c. filter discovery chain');
+
+const catalogOut = (await createApiTool(findEndpoint('ops_filter_catalog')!, {
+  config: CONFIG,
+  fetchImpl: stubFetch(CATALOG_SAMPLE),
+}).execute!({}, {} as never)) as Record<string, any>;
+console.log(`    appGroups: ${catalogOut.appGroups.join(', ')}`);
+check('reads the content envelope', catalogOut.totalEntries === 4);
+check('excludes inactive rows', !catalogOut.appGroups.includes('Retired Group'));
+check('dedupes and sorts groups', catalogOut.appGroups[0] === 'Atlas');
+check('keeps regions per area', catalogOut.entries[0].appRegions.includes('Ambient'));
+
+let catalogBody: unknown;
+await createApiTool(findEndpoint('ops_filter_catalog')!, {
+  config: CONFIG,
+  fetchImpl: (async (_u: string, init: RequestInit) => {
+    catalogBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify(CATALOG_SAMPLE), { status: 200 });
+  }) as unknown as typeof fetch,
+}).execute!({}, {} as never);
+check('sends the fixed pageSize envelope', JSON.stringify(catalogBody) === '{"pageSize":1000,"pagingState":""}',
+  JSON.stringify(catalogBody));
+
+const appsOut = (await createApiTool(findEndpoint('ops_applications')!, {
+  config: CONFIG,
+  fetchImpl: stubFetch(APPS_SAMPLE),
+}).execute!({ appGroup: 'Atlas', appArea: 'Atlas', appRegion: 'Ambient' }, {} as never)) as Record<string, any>;
+check('lists application names', appsOut.appNames.join(',') === 'Kafka,Pharmacy');
+check('extracts divisions', appsOut.appDivisions.join(',') === 'Pharmacy,RDC');
+
+let appsBody: unknown;
+await createApiTool(findEndpoint('ops_applications')!, {
+  config: CONFIG,
+  fetchImpl: (async (_u: string, init: RequestInit) => {
+    appsBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify(APPS_SAMPLE), { status: 200 });
+  }) as unknown as typeof fetch,
+}).execute!({ appGroup: 'Atlas', appArea: 'Atlas', appRegion: 'Ambient' }, {} as never);
+check('uses a FLAT body, not filter.queryParams',
+  JSON.stringify(appsBody) === '{"appGroup":"Atlas","appArea":"Atlas","appRegion":"Ambient"}',
+  JSON.stringify(appsBody));
+
+const groupsOut = (await createApiTool(findEndpoint('ops_matrix_path_groups')!, {
+  config: CONFIG,
+  fetchImpl: stubFetch(KPI_GROUPS_SAMPLE),
+}).execute!(
+  { appGroup: 'Atlas', appArea: 'Atlas', appRegion: 'Ambient', appName: 'Kafka' },
+  {} as never,
+)) as Record<string, any>;
+check('lists matrix path groups', groupsOut.matrixPathGroups.join(',') === 'Alerts');
+
+let namesBody: unknown;
+const pathsOut = (await createApiTool(findEndpoint('ops_matrix_paths')!, {
+  config: CONFIG,
+  fetchImpl: (async (_u: string, init: RequestInit) => {
+    namesBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify(KPI_NAMES_SAMPLE), { status: 200 });
+  }) as unknown as typeof fetch,
+}).execute!(
+  { appGroup: 'Atlas', appArea: 'Atlas', appRegion: 'Ambient', appName: 'Kafka', matrixPathGroup: 'Alerts' },
+  {} as never,
+)) as Record<string, any>;
+check('maps kpiName to matrixPath', pathsOut.matrixPaths[0].matrixPath === 'Consumer Lag');
+check('keeps platform and owner', pathsOut.matrixPaths[0].primaryOwner === 'Atlas_Ambient_Ops');
+check('translates matrixPathGroup back to kpiGroup on the wire',
+  (namesBody as Record<string, unknown>).kpiGroup === 'Alerts');
+
+console.log('\n    --- search display ---');
+console.log(String(searchOut.display).split('\n').map((l) => `    ${l}`).join('\n'));
+console.log('\n    --- catalog display ---');
+console.log(String(catalogOut.display).split('\n').slice(0, 9).map((l) => `    ${l}`).join('\n'));
 
 // ── 7. Registry hygiene ──────────────────────────────────────────────────────
 heading('7. registry hygiene');

@@ -114,15 +114,26 @@ function pickFromCarriers<T>(carriers: Record<string, unknown>[], key: string): 
 
 function assessQuality(metadata: OpsMetadata): DataQuality {
   const warnings: string[] = [];
-  const failed = metadata.shards?.failed ?? 0;
+  const shards = metadata.shards;
+  const failed = shards?.failed ?? 0;
+  const total = shards?.total;
 
-  if (failed > 0) {
-    const total = metadata.shards?.total ?? '?';
+  // Only trust the shard block when it is internally consistent. Some responses
+  // carry placeholder values (successful > total), and inventing a data-loss
+  // warning from nonsense is as bad as missing a real one.
+  const shardsCoherent =
+    typeof total !== 'number' || (shards?.successful ?? 0) + failed <= total;
+
+  if (failed > 0 && shardsCoherent) {
     warnings.push(
-      `${failed} of ${total} shards failed — counts are undercounts and must not be reported as exact totals`,
+      `${failed} of ${total ?? '?'} shards failed — counts are undercounts and must not be reported as exact totals`,
     );
+  } else if (failed > 0) {
+    warnings.push('the shard report is inconsistent — completeness of these results could not be verified');
   }
-  if (metadata.timedOut) {
+  // Strictly `true`. Some endpoints return a timestamp string here; a non-empty
+  // string is truthy and would otherwise report a healthy result as partial.
+  if (metadata.timedOut === true) {
     warnings.push('the query timed out server-side — results are partial');
   }
 
