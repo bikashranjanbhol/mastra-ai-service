@@ -69,6 +69,41 @@ export class OpsApiError extends Error {
   }
 }
 
+/**
+ * Turn an error response body into something a human can act on.
+ *
+ * Bean-validation failures put the useful part — which field, and why — AFTER a
+ * fully-qualified Java method signature that can run to hundreds of characters.
+ * Naively truncating the body therefore reliably discards the only bit that
+ * matters, so field errors are extracted and led with.
+ */
+export function describeApiError(text: string): string {
+  if (!text.trim()) return '(empty response body)';
+
+  let message = text;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (typeof parsed.message === 'string' && parsed.message.trim()) message = parsed.message;
+  } catch {
+    // Not JSON — keep the raw text.
+  }
+
+  // "Field error in object 'x' on field 'pageSize': rejected value [1000];
+  //  ... default message [must be less than or equal to 100]"
+  const fieldErrors: string[] = [];
+  const fieldPattern = /on field '([^']+)':[^]*?default message \[([^\]]+)\]/g;
+  for (const match of message.matchAll(fieldPattern)) {
+    fieldErrors.push(`${match[1]}: ${match[2]}`);
+  }
+
+  if (fieldErrors.length > 0) {
+    return `validation failed — ${fieldErrors.join('; ')}`;
+  }
+
+  // No structured field errors: keep enough of the body to be diagnosable.
+  return message.length > 1200 ? `${message.slice(0, 1200)}… (truncated)` : message;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Envelope handling
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,14 +183,14 @@ export function parseEnvelope<T>(root: unknown, path: string): OpsResponse<T> {
 
   const status = typeof root.status === 'string' ? root.status : undefined;
   if (status && status.toUpperCase() !== 'SUCCESS') {
-    throw new OpsApiError(`ops API returned status "${status}": ${String(root.message ?? 'no message')}`, {
+    throw new OpsApiError(`ops API returned status "${status}": ${describeApiError(String(root.message ?? ''))}`, {
       path,
       apiStatus: status,
       apiError: root.error,
     });
   }
   if (root.error != null) {
-    throw new OpsApiError(`ops API returned an error: ${JSON.stringify(root.error).slice(0, 200)}`, {
+    throw new OpsApiError(`ops API returned an error: ${describeApiError(JSON.stringify(root.error))}`, {
       path,
       apiError: root.error,
     });
@@ -215,7 +250,7 @@ export async function postOps<T>(
 
       if (!res.ok) {
         const text = await res.text().catch(() => '');
-        const err = new OpsApiError(`ops API ${res.status} for ${path}: ${text.slice(0, 200)}`, {
+        const err = new OpsApiError(`ops API ${res.status} for ${path}: ${describeApiError(text)}`, {
           path,
           status: res.status,
         });

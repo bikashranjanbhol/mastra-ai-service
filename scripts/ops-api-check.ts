@@ -7,7 +7,7 @@
  * propagation, data-quality detection, error mapping and the approval policy.
  * It proves nothing about the live service — use a contract test for that.
  */
-import { parseEnvelope, postOps, OpsApiError } from '../src/mastra/services/ops-api/client';
+import { parseEnvelope, postOps, OpsApiError, describeApiError } from '../src/mastra/services/ops-api/client';
 import { OPS_ENDPOINTS, findEndpoint } from '../src/mastra/services/ops-api/registry';
 import { createApiTool } from '../src/mastra/tools/ops-api';
 import type { OpsApiConfig } from '../src/mastra/config/ops-api';
@@ -276,6 +276,43 @@ console.log('\n    --- search display ---');
 console.log(String(searchOut.display).split('\n').map((l) => `    ${l}`).join('\n'));
 console.log('\n    --- catalog display ---');
 console.log(String(catalogOut.display).split('\n').slice(0, 9).map((l) => `    ${l}`).join('\n'));
+
+// ── 6d. Error diagnosis ──────────────────────────────────────────────────────
+heading('6d. validation errors stay diagnosable');
+
+// A real Spring bean-validation body: the useful part sits far past the
+// 200-char mark that the previous implementation truncated at.
+const SPRING_400 = JSON.stringify({
+  status: 'FAILURE',
+  message:
+    'Validation failed for argument at index 0 in method: public org.springframework.http.ResponseEntity' +
+    '<com.example.ops.dto.ApiResponse<com.example.ops.dto.PagedResult<com.example.ops.dto.AppAreaMaster>>> ' +
+    'com.example.ops.controller.OpsMetricsController.byAppGroupAppArea(com.example.ops.dto.PagedRequest), ' +
+    "with 1 error(s): [Field error in object 'pagedRequest' on field 'pageSize': rejected value [1000]; " +
+    'codes [Max.pagedRequest.pageSize,Max.pageSize,Max.java.lang.Integer,Max]; ' +
+    'default message [must be less than or equal to 100]]',
+});
+
+const described = describeApiError(SPRING_400);
+console.log(`    raw body  : ${SPRING_400.length} chars`);
+console.log(`    diagnosed : ${described}`);
+check('names the offending field', described.includes('pageSize'));
+check('gives the constraint', described.includes('must be less than or equal to 100'));
+check('is short enough to read', described.length < 120, `${described.length} chars`);
+check('old 200-char truncation would have hidden it', !SPRING_400.slice(0, 200).includes('pageSize'));
+
+const multi = describeApiError(
+  JSON.stringify({
+    message:
+      "with 2 error(s): [Field error in object 'r' on field 'pageSize': rejected value [1000]; " +
+      "default message [must be less than or equal to 100]] [Field error in object 'r' on field 'pagingState': " +
+      'rejected value []; default message [must not be blank]]',
+  }),
+);
+console.log(`    multi     : ${multi}`);
+check('reports every failing field', multi.includes('pageSize') && multi.includes('pagingState'));
+check('non-JSON bodies survive', describeApiError('upstream timeout').includes('upstream timeout'));
+check('empty body is labelled', describeApiError('').includes('empty'));
 
 // ── 7. Registry hygiene ──────────────────────────────────────────────────────
 heading('7. registry hygiene');

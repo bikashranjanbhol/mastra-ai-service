@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "smoke": "tsx scripts/smoke.ts",
     "bench:selftest": "tsx scripts/bench-selftest.ts",
-    "check:ops-api": "tsx scripts/ops-api-check.ts"
+    "check:ops-api": "tsx scripts/ops-api-check.ts",
+    "probe:ops-api": "tsx scripts/ops-api-probe.ts"
   },
   "keywords": [],
   "author": "",
