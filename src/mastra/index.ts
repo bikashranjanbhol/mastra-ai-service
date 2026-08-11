@@ -14,8 +14,10 @@ import { createMastraStorage, resolveStorageTarget } from './config/storage';
 
 import { docsAgent } from './agents/docs-agent';
 import { triageAgent } from './agents/triage-agent';
+import { opsAgent } from './agents/ops-agent';
 import { searchDocsTool } from './tools/search-docs';
 import { createTicketTool } from './tools/create-ticket';
+import { opsTools } from './tools/ops-api';
 import { triageAndFileWorkflow } from './workflows/triage-and-file';
 import { answerGroundednessScorer, triageValidityScorer } from './scorers';
 
@@ -28,8 +30,8 @@ const storageTarget = resolveStorageTarget();
 logger.info('storage resolved', { service: SERVICE_NAME, backend: storageTarget.backend, target: storageTarget.describe });
 
 export const mastra = new Mastra({
-  agents: { docsAgent, triageAgent },
-  tools: { searchDocsTool, createTicketTool },
+  agents: { docsAgent, triageAgent, opsAgent },
+  tools: { searchDocsTool, createTicketTool, ...opsTools },
   workflows: { triageAndFileWorkflow },
   scorers: { answerGroundednessScorer, triageValidityScorer },
   storage: await createMastraStorage(storageTarget),
