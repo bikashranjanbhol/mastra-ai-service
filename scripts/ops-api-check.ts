@@ -138,6 +138,35 @@ check('builds filter.queryParams envelope', body.filter?.queryParams?.appGroup =
 check('omits absent optional filter', !('appArea' in (body.filter?.queryParams ?? {})));
 check('includes pagination block', body.pagination !== undefined);
 
+// ── 5b. Deterministic display block ──────────────────────────────────────────
+heading('5b. rendered display block');
+const display = String(out.display ?? '');
+console.log(display.split('\n').map((l) => `    ${l}`).join('\n'));
+check('is a markdown table', display.includes('| Metric | Count |'));
+check('formats thousands separators', display.includes('1,492'), 'raw 1492 would read poorly');
+check('includes every metric', ['🔴 Red', '🟡 Amber', 'Total alerts', 'Paths affected'].every((l) => display.includes(l)));
+check('emphasises the total', display.includes('| **Total alerts** | **2,296** |'));
+check('states applied filters', /Filters applied:.*appGroup: Atlas/.test(display));
+check('healthy result carries no warning banner', !display.includes('⚠️'));
+
+const partialTool = createApiTool(endpoint, {
+  config: CONFIG,
+  fetchImpl: stubFetch(
+    (() => {
+      const s = structuredClone(REAL_SAMPLE);
+      s.data.data.metadata.shards = { total: 3, successful: 2, failed: 1 };
+      return s;
+    })(),
+  ),
+});
+const partialOut = (await partialTool.execute!({ appGroup: 'Atlas' }, {} as never)) as Record<string, unknown>;
+const partialDisplay = String(partialOut.display ?? '');
+console.log(`\n    --- partial-data variant ---`);
+console.log(partialDisplay.split('\n').slice(-3).map((l) => `    ${l}`).join('\n'));
+check('partial result renders a warning banner', partialDisplay.includes('⚠️'));
+check('warning banner says lower bounds', /lower bounds/i.test(partialDisplay));
+check('warning text is included', /shards failed/.test(partialDisplay));
+
 // ── 6. Approval policy ───────────────────────────────────────────────────────
 heading('6. approval policy');
 check('read endpoint does not require approval', (tool as { requireApproval?: unknown }).requireApproval === false);

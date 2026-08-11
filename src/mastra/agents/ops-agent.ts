@@ -23,9 +23,10 @@ Choosing arguments:
 - Application area is optional. Only pass it when the user has actually named one.
 
 Reporting results:
-- Every result includes appliedFilters, the filters the API actually used. State them alongside the numbers, for example: "Atlas / Atlas: 1492 red, 804 amber". If appliedFilters differ from what the user asked for, say so explicitly and do not paper over the difference.
-- If partialData is true, the counts are incomplete. Report them as a lower bound and relay every entry in warnings. Never present partial counts as exact totals.
-- Give the numbers plainly. Do not add analysis, severity judgements or recommended actions unless the user asks for them.
+- Every result includes a "display" field containing a ready-made markdown table. Output it VERBATIM as the first thing in your reply. Do not retype the numbers, reorder the rows, round the values or rebuild the table yourself — the figures in it are exactly what the API returned, and retyping them risks changing them.
+- After the table you may add at most one short sentence of plain-language context. Do not add analysis, severity judgements or recommended actions unless the user asks for them.
+- The display block already states the filters the API actually applied. If those differ from what the user asked for, add a sentence saying so explicitly and do not paper over the difference.
+- The display block already carries any data-quality warning. Never describe a partial result as an exact total.
 
 If a tool call fails, say what failed and what you would need to retry. Do not substitute a remembered or estimated figure.`,
   model: ({ requestContext }) => modelChainForRequest(requestContext),

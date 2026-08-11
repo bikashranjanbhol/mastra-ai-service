@@ -84,6 +84,9 @@ const provenanceSchema = z.object({
     .describe('Filters the API actually applied. State these when reporting numbers.'),
   partialData: z.boolean().describe('True when the result is known to be incomplete'),
   warnings: z.array(z.string()).describe('Data-quality warnings that must be relayed to the user'),
+  display: z
+    .string()
+    .describe('Pre-formatted markdown summary of this result. Reproduce it verbatim; do not retype the numbers.'),
 });
 
 function provenance(ctx: ProjectContext) {
@@ -92,6 +95,58 @@ function provenance(ctx: ProjectContext) {
     partialData: ctx.quality.partial,
     warnings: ctx.quality.warnings,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Display rendering
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Thousands separators, so 1493 reads as 1,493 in the table. */
+function formatNumber(value: number): string {
+  return value.toLocaleString('en-US');
+}
+
+export interface DisplayRow {
+  label: string;
+  value: number;
+  /** Renders the row in bold — use for totals. */
+  emphasis?: boolean;
+}
+
+/**
+ * Build the markdown block the agent reproduces verbatim.
+ *
+ * Rendered in CODE, not by the model. The model has already been observed
+ * dropping fields and reformatting values when asked to present numbers itself;
+ * generating the table here means the figures a user reads are exactly the
+ * figures the API returned.
+ */
+export function renderDisplay(title: string, rows: DisplayRow[], ctx: ProjectContext): string {
+  const lines: string[] = [`**${title}**`, '', '| Metric | Count |', '| :--- | ---: |'];
+
+  for (const row of rows) {
+    lines.push(
+      row.emphasis
+        ? `| **${row.label}** | **${formatNumber(row.value)}** |`
+        : `| ${row.label} | ${formatNumber(row.value)} |`,
+    );
+  }
+
+  const filters = Object.entries(ctx.appliedFilters);
+  lines.push('');
+  lines.push(
+    filters.length > 0
+      ? `Filters applied: ${filters.map(([k, v]) => `\`${k}: ${String(v)}\``).join(', ')}`
+      : 'Filters applied: none reported by the API',
+  );
+
+  if (ctx.quality.partial) {
+    lines.push('');
+    lines.push('> ⚠️ **Incomplete result — treat these as lower bounds.**');
+    for (const warning of ctx.quality.warnings) lines.push(`> - ${warning}`);
+  }
+
+  return lines.join('\n');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,12 +177,29 @@ const redAmberOverall = defineEndpoint({
   project: (payload, ctx) => {
     const p = (payload ?? {}) as Record<string, unknown>;
     const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-    return {
+
+    const metrics = {
       red: num(p.red),
       amber: num(p.amber),
       totalAlerts: num(p.totalAlerts),
       totalPaths: num(p.totalPaths),
+    };
+
+    const scope = [ctx.appliedFilters.appGroup, ctx.appliedFilters.appArea].filter(Boolean).join(' / ') || 'All';
+
+    return {
+      ...metrics,
       ...provenance(ctx),
+      display: renderDisplay(
+        `Red / amber alerts — ${scope}`,
+        [
+          { label: '🔴 Red', value: metrics.red },
+          { label: '🟡 Amber', value: metrics.amber },
+          { label: 'Total alerts', value: metrics.totalAlerts, emphasis: true },
+          { label: 'Paths affected', value: metrics.totalPaths },
+        ],
+        ctx,
+      ),
     };
   },
 });
