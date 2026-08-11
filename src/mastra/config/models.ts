@@ -388,3 +388,52 @@ export function buildModelChain(
       };
     });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Request-context integration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Request-context keys agents honour for per-request model routing. */
+export const MODEL_CONTEXT_KEYS = { provider: 'provider', tier: 'tier' } as const;
+
+/**
+ * Minimal structural view of Mastra's `RequestContext`.
+ *
+ * NOTE: this object was named `runtimeContext` in earlier Mastra versions and
+ * is `requestContext` as of v1 — the dynamic-argument type is
+ * `DynamicArgument<T> = T | (({ requestContext, mastra }) => T)`.
+ */
+export interface ContextReader {
+  get(key: string): unknown;
+}
+
+function readOverride<T extends string>(
+  ctx: ContextReader | undefined,
+  key: string,
+  allowed: readonly T[],
+): T | undefined {
+  const raw = ctx?.get(key);
+  return typeof raw === 'string' && (allowed as readonly string[]).includes(raw) ? (raw as T) : undefined;
+}
+
+/**
+ * Resolve the model chain for a single request.
+ *
+ * This is what agents pass as their `model`, so the SAME agent can be pointed
+ * at any provider by setting `provider` / `tier` on the request context.
+ * Throws only at request time (never at import time) when nothing is configured.
+ */
+export function modelChainForRequest(requestContext?: ContextReader): ModelChainEntry[] {
+  const chain = buildModelChain({
+    provider: readOverride(requestContext, MODEL_CONTEXT_KEYS.provider, PROVIDER_IDS),
+    tier: readOverride(requestContext, MODEL_CONTEXT_KEYS.tier, MODEL_TIERS),
+  });
+
+  if (chain.length === 0) {
+    const names = DEFAULT_PROVIDER_ORDER.map((id) => PROVIDERS[id].apiKeyEnvVars[0]).join(', ');
+    throw new NoProvidersConfiguredError(
+      `Cannot resolve a model: no provider API key is set. Set one of: ${names}.`,
+    );
+  }
+  return chain;
+}
