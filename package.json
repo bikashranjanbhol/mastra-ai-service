@@ -12,7 +12,8 @@
     "bench": "tsx scripts/bench.ts",
     "check:neutral": "tsx scripts/check-provider-neutrality.ts",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "bench:selftest": "tsx scripts/bench-selftest.ts"
   },
   "keywords": [],
   "author": "",

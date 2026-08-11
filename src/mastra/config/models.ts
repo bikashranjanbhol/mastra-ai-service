@@ -393,8 +393,14 @@ export function buildModelChain(
 // Request-context integration
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Request-context keys agents honour for per-request model routing. */
-export const MODEL_CONTEXT_KEYS = { provider: 'provider', tier: 'tier' } as const;
+/**
+ * Request-context keys agents honour for per-request model routing.
+ *
+ * `fallback: 'off'` pins the request to exactly one provider. The benchmark
+ * relies on this: with the chain active, a failing provider is silently rescued
+ * by the next one and the comparison table would misattribute the result.
+ */
+export const MODEL_CONTEXT_KEYS = { provider: 'provider', tier: 'tier', fallback: 'fallback' } as const;
 
 /**
  * Minimal structural view of Mastra's `RequestContext`.
@@ -424,10 +430,14 @@ function readOverride<T extends string>(
  * Throws only at request time (never at import time) when nothing is configured.
  */
 export function modelChainForRequest(requestContext?: ContextReader): ModelChainEntry[] {
-  const chain = buildModelChain({
+  const full = buildModelChain({
     provider: readOverride(requestContext, MODEL_CONTEXT_KEYS.provider, PROVIDER_IDS),
     tier: readOverride(requestContext, MODEL_CONTEXT_KEYS.tier, MODEL_TIERS),
   });
+
+  // Pin to a single provider when asked, so failures are attributable.
+  const pinned = requestContext?.get(MODEL_CONTEXT_KEYS.fallback) === 'off';
+  const chain = pinned ? full.slice(0, 1) : full;
 
   if (chain.length === 0) {
     const names = DEFAULT_PROVIDER_ORDER.map((id) => PROVIDERS[id].apiKeyEnvVars[0]).join(', ');

@@ -65,11 +65,16 @@ export const answerGroundednessScorer = createScorer<GroundednessInput, Grounded
     const a = results.analyzeStepResult;
     if (!a.hasText) return 0;
 
-    // No citations at all: the answer may be right but is not attributable.
-    if (a.cited.length === 0) return 0.2;
-
     // Any fabricated citation is disqualifying.
     if (a.hallucinated.length > 0) return 0;
+
+    if (a.cited.length === 0) {
+      // Correctly abstaining: nothing was expected to be cited, so having no
+      // citation is the right outcome rather than a gap.
+      if (a.expectedTotal === 0) return 1;
+      // Otherwise the answer may be right but is not attributable.
+      return 0.2;
+    }
 
     // Otherwise reward covering the expected sources.
     if (a.expectedTotal === 0) return 1;
@@ -79,7 +84,11 @@ export const answerGroundednessScorer = createScorer<GroundednessInput, Grounded
     const a = results.analyzeStepResult;
     if (!a.hasText) return 'empty answer';
     if (a.hallucinated.length > 0) return `cited passages that were never retrieved: ${a.hallucinated.join(', ')}`;
-    if (a.cited.length === 0) return 'answer contains no passage citations';
+    if (a.cited.length === 0) {
+      return a.expectedTotal === 0
+        ? 'no citation expected and none given'
+        : 'answer contains no passage citations';
+    }
     return `cited ${a.cited.join(', ')}; covered ${a.expectedHit.length}/${a.expectedTotal} expected sources (score ${score})`;
   });
 
